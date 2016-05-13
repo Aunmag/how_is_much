@@ -1,0 +1,30 @@
+.QLabel#lb_ask_heading {qproperty-alignment: AlignCenter;}
+.QLabel#lb_ask_text {qproperty-alignment: AlignCenter; font-weight: bold; font-size: 28px;}
+
+.QLineEdit {border: 1px solid #bbb; selection-background-color: #009b9b;}
+.QLineEdit:disabled {background: #ddd;}
+.QLineEdit#tb_answer {
+    qproperty-alignment: AlignCenter;
+    padding-bottom: 5px;
+    border-top: 1px solid #bbb;
+    border-left: 1px solid #bbb;
+    border-right: 1px solid #bbb;
+    border-bottom: 0;
+    font-size: 16px;
+    background: #eee;
+}
+.QLineEdit#tb_answer:disabled{color: #bbb;}
+
+.QCheckBox:indicator {border: 1px solid #bbb;}
+.QCheckBox:indicator:checked {background: #009b9b;}
+
+.QPushButton {border: 1px solid #bbb; background: #eee;}
+.QPushButton:checked {border: 0; background: #009b9b; color: #fff;}
+.QPushButton:disabled {background: #bbb;}
+
+.QProgressBar {
+    border-left: 1px solid #bbb;
+    border-right: 1px solid #bbb;
+    border-bottom: 1px solid #bbb;
+    background: #bbb;}
+.QProgressBar:chunk {background: #009b9b; width: 1px;}

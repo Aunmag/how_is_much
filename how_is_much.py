@@ -2,248 +2,340 @@
 # -*- coding: utf-8 -*-
 
 from sys import argv, exit
+from pickle import load, dump
 from random import randrange
+from math import sqrt
 from PyQt4 import QtGui, QtCore
 
-# Configs:
-target = 100  # necessary quantity of correct answers for the next level
-basic_answer_time = 4000  # basic time for the answering
-difficult = 0.66  # game difficult from 0.1 to 0.9 affect changing of time by answers
-
-# Initialization general values:
-step = 1  # it will increase with every player answer
-trues = 0  # it will increase with every correct answer of player
-mistakes = 0  # it will increase with every wrong answer of player
+# Initialization of general values and configs:
+lim_n = 100  # maximal task number
+lim_inc = True  # auto increasing of the limit number
+ans_t = 2000*len(str(int(lim_n)))  # basic time for the answering
+ans_dec = False  # auto decreasing of the answer time
+difficult = 0.05  # auto increasing speed of the answer time and the limit number (from 0.01 to 0.09)
+step = 0  # will be increased with every new task
+correct = True  # if the last answer is correct
 answers_history = []  # answers history will be keeping here
+tasks_history = []  # failed tasks will be keeping here for repetition
+ask_heading = ""  # heading of ask will be containing here
+ask_text = ""  # text of ask will be containing here
+
+# Loading previous configs:
+try:  # if the configs file exist
+    saves = load(open("saves.p", "rb"))
+    lim_n = saves["lim_n"]
+    lim_inc = saves["lim_inc"]
+    ans_t = saves["ans_t"]
+    ans_dec = saves["ans_dec"]
+except FileNotFoundError:  # if the configs file can't be found
+    pass
 
 
-class Window(QtGui.QMainWindow):
+class Window(QtGui.QWidget):
 
-    # General window configs:
-    win_width = 300
-    win_height = 170
-    led_time = 500
+    led_time = 400
+    led_timer_step = 0
 
     def __init__(self,):
         super(Window, self).__init__()
+
         # Main window:
-        self.setFixedSize(self.win_width, self.win_height)
-        self.setWindowTitle("Mathematics Trainer")
+        self.setFixedSize(330, 155)
+        self.setWindowTitle("How Is Much")
         self.setWindowIcon(QtGui.QIcon("favicon.ico"))
-        # Label - about game:
-        self.lb_about = QtGui.QLabel("<center>Mathematics Trainer v0.5 alpha by Aunmag</center>", self)
-        self.lb_about.setGeometry(0, self.win_height - 160, self.win_width, 20)
-        # Progress Bar - timer indicator:
-        self.pb_time_indict = QtGui.QProgressBar(self)
-        self.pb_time_indict.setTextVisible(False)
-        self.pb_time_indict.setGeometry(0, self.win_height - 130, self.win_width, 20)
-        self.pb_time_indict_value = 0  # temporary value for initialization of variable
-        self.pb_time_indict_state = True  # activation of the timer indicator
-        # Label - heading of ask:
-        self.lb_ask_heading = QtGui.QLabel(str(ask_heading), self)
-        self.lb_ask_heading.setGeometry(0, self.win_height - 110, self.win_width, 40)
-        # Label - text of ask:
-        self.lb_ask_text = QtGui.QLabel(ask_text, self)
-        self.lb_ask_text.setGeometry(0, self.win_height - 80, self.win_width, 40)
-        # Line Edit - answer form:
+
+        # Background:
+        palette = QtGui.QPalette()
+        palette.setColor(QtGui.QPalette.Background, QtGui.QColor("#eee"))
+        self.setPalette(palette)
+
+        # Window grid:
+        grid = QtGui.QGridLayout()
+        grid.setSpacing(6)
+        grid.setMargin(6)
+
+        # Window stylisation:
+        try:
+            with open("theme.css", "r") as theme:
+                self.setStyleSheet(theme.read())
+        except FileNotFoundError:
+            pass
+
+        # Heading of ask:
+        self.lb_ask_heading = QtGui.QLabel("You can press \"Page Down\" key to clear answer form.", self)
+        self.lb_ask_heading.setObjectName('lb_ask_heading')
+        grid.addWidget(self.lb_ask_heading, 1, 1, 1, 4)
+
+        # Text of ask:
+        self.lb_ask_text = QtGui.QLabel("Welcome!", self)
+        self.lb_ask_text.setObjectName('lb_ask_text')
+        grid.addWidget(self.lb_ask_text, 2, 1, 1, 4)
+
+        # Answer form:
         self.tb_answer = QtGui.QLineEdit(self)
-        QtGui.QShortcut(QtGui.QKeySequence("Return"), self.tb_answer, checking)  # adding of hot key
-        self.tb_answer.setGeometry(0, self.win_height - 30, self.win_width, 30)
-        self.tb_answer.setAlignment(QtCore.Qt.AlignCenter)
+        QtGui.QShortcut(QtGui.QKeySequence("Return"), self.tb_answer, checking)
+        QtGui.QShortcut(QtGui.QKeySequence("Enter"), self.tb_answer, checking)
+        QtGui.QShortcut(QtGui.QKeySequence("PgDown"), self.tb_answer, self.tb_answer.clear)
+        self.tb_answer.setText("Press \"Return\" key to start.")
+        self.tb_answer.setFixedHeight(35)
+        self.tb_answer.setObjectName('tb_answer')
+        self.tb_answer.setFocus()  # automatic setting of the cursor in the answer form
+        grid.addWidget(self.tb_answer, 3, 1, 2, 4)
+
+        # Timer:
+        self.pb_timer = QtGui.QProgressBar(self)
+        self.pb_timer.setTextVisible(False)
+        self.pb_timer.setFixedHeight(5)
+        self.pb_timer.setValue(100)
+        self.pb_timer_value = 0  # temporary value for initialization of variable
+        self.pb_timer_state = 0  # timer activation
+        self.pb_timer_state_old = self.pb_timer_state  # backup of timer state
+        grid.addWidget(self.pb_timer, 4, 1, 1, 4)
+
+        # Limit number configs:
+        self.lb_lim_n = QtGui.QLabel("Limit number", self)
+        grid.addWidget(self.lb_lim_n, 5, 1)
+        self.le_lim_n = QtGui.QLineEdit(self)
+        self.le_lim_n.setText(str(int(lim_n)))
+        self.le_lim_n.textChanged.connect(self.le_ans_t_upd)
+        grid.addWidget(self.le_lim_n, 5, 2)
+        self.cb_lim_inc = QtGui.QCheckBox("Auto increasing", self)
+        self.cb_lim_inc.toggle() if lim_inc else None
+        self.cb_lim_inc.stateChanged.connect(lim_inc_switch)
+        grid.addWidget(self.cb_lim_inc, 5, 3)
+
+        # Answer time configs:
+        self.lb_lim_n = QtGui.QLabel("Answer time", self)
+        grid.addWidget(self.lb_lim_n, 6, 1)
+        self.le_ans_t = QtGui.QLineEdit(self)
+        self.le_ans_t.setText(str(ans_t))
+        grid.addWidget(self.le_ans_t, 6, 2)
+        self.cb_ans_dec = QtGui.QCheckBox("Auto decreasing", self)
+        self.cb_ans_dec.toggle() if ans_dec else None
+        self.cb_ans_dec.stateChanged.connect(ans_dec_switch)
+        grid.addWidget(self.cb_ans_dec, 6, 3)
+
+        # Pause button:
+        self.btn_pause = QtGui.QPushButton("Pause (Esc)", self)
+        self.btn_pause.setFixedWidth(90)
+        self.btn_pause.setSizePolicy(QtGui.QSizePolicy.Preferred, QtGui.QSizePolicy.Expanding)
+        self.btn_pause.clicked.connect(self.pause)
+        self.btn_pause.setShortcut("Escape")
+        self.btn_pause.setCheckable(True)
+        self.btn_pause.setEnabled(False)
+        grid.addWidget(self.btn_pause, 5, 4, 2, 1)
+
         # Other:
-        self.show()
-        self.answer_timer = None  # it will be timer for the answering later
+        self.setLayout(grid)
 
-    def pb_time_indict_upd(self):
-        """Regular updating of progress bar of the timer indicator."""
-        # If the timer indicator is working:
-        if self.pb_time_indict_value > 0 and self.pb_time_indict_state:
-            self.pb_time_indict_value -= 1  # decreasing of current value
-            self.pb_time_indict.setValue(self.pb_time_indict_value)  # setting of current value
-            QtCore.QTimer().singleShot(1, lambda: self.pb_time_indict_upd())  # recalling itself
+    def le_ans_t_upd(self):
+        if step == 0:
+            self.le_ans_t.setText(str(2000*len(self.le_lim_n.text())))
 
-    def answer_start(self):
-        """Launching of the timer and the timer indicator."""
-        # Timer indicator launching:
-        self.pb_time_indict_state = True  # activation of timer indicator
-        self.pb_time_indict_upd()  # calling updating of timer indicator
-        # If the timer already working:
-        if self.answer_timer:
-            self.answer_timer.stop()
-        # Timer launching:
-        self.answer_timer = QtCore.QTimer()
-        self.answer_timer.timeout.connect(checking)  # wrong if time is up
-        self.answer_timer.setSingleShot(True)  # ???
-        self.answer_timer.start(answer_time)  # starting and setting time for the answering
+    def timer_upd(self):
+        """Regular updating of the timer."""
+        # If the timer is working:
+        if self.pb_timer_value > 0 and self.pb_timer_state == 2:
+            self.pb_timer_value -= 1  # decreasing of current value
+            self.pb_timer.setValue(self.pb_timer_value)  # setting of current value
+            QtCore.QTimer().singleShot(1, lambda: self.timer_upd())  # recalling itself
+        elif self.pb_timer_value <= 0 and self.pb_timer_state == 2:
+            self.pb_timer_state = 1
+            checking()
+            QtCore.QTimer().singleShot(1, lambda: self.timer_upd())  # recalling itself
+        elif self.pb_timer_value <= ans_t and self.pb_timer_state == 1:
+            self.pb_timer_value += self.led_timer_step
+            self.pb_timer.setValue(self.pb_timer_value)  # setting of current value
+            QtCore.QTimer().singleShot(1, lambda: self.timer_upd())  # recalling itself
+        elif self.pb_timer_value > ans_t and self.pb_timer_state == 1:
+            self.pb_timer_state = 0
+            task_generation()
+
+    def pause(self):
+        """Game pause"""
+        if self.btn_pause.isChecked():  # pause activation
+            # General:
+            self.pb_timer_state_old = self.pb_timer_state
+            self.pb_timer_state = 0  # timer deactivation
+            self.tb_answer.setDisabled(1)  # answer form blocking
+            # Task hiding:
+            self.lb_ask_text.setText("Pause")
+        else:  # pause deactivation
+            # Timer updating:
+            self.pb_timer_state = self.pb_timer_state_old  # timer activation (2)
+            self.timer_upd()  # timer launching
+            # Task showing:
+            self.lb_ask_text.setText(ask_text)
+            # Answer form updating:
+            self.tb_answer.setDisabled(0)  # answer form unblocking
+            self.tb_answer.setFocus()  # automatic setting of the cursor in the answer form
 
     def upd_general(self):
         """General updating GUI elements."""
-        # Updating of the time indicator:
-        self.pb_time_indict.setRange(0, answer_time)  # range
-        self.pb_time_indict_value = answer_time  # start value
+        # Configs form information updating:
+        self.le_ans_t.setText(str(ans_t))
+        self.le_lim_n.setText(str(int(lim_n)))
+        # Timer updating:
+        self.pb_timer.setRange(0, ans_t)  # range
+        self.pb_timer_value = ans_t  # start value
         # Answer form updating:
         self.tb_answer.clear()  # answer form cleaning
         self.tb_answer.setDisabled(0)  # answer form unblocking
         self.tb_answer.setFocus()  # automatic setting of the cursor in the answer form
-        # Ask heading updating:
-        self.lb_ask_heading.setText(ask_heading)
-        # Ask text updating:
-        self.lb_ask_text.setText(ask_text)
+        # Other:
+        self.lb_ask_heading.setText(ask_heading)  # ask heading updating
+        self.lb_ask_text.setText(ask_text)  # ask text updating
 
     def upd_after_answer(self):
         """GUI updating after answering."""
-        self.answer_timer.stop()  # stopping of the answering timer
-        self.pb_time_indict_state = False  # deactivation of timer indicator
+        self.led_timer_step = (ans_t - self.pb_timer_value)/self.led_time
+        self.pb_timer_state = 1
         self.tb_answer.setDisabled(1)  # answer form blocking
-
-    def upd_correct(self):
-        """Temporary changing color of the ask text if answer is correct."""
-        self.lb_ask_text.setText("<font size=8 color=green><b><center>" + ask_text + "</center></b></font>")
-        QtCore.QTimer().singleShot(self.led_time, lambda: task_generation())  # waiting before to continue
-
-    def upd_wrong(self):
-        """Temporary changing color of the ask text if answer is wrong."""
-        self.lb_ask_text.setText("<font size=8 color=red><b><center>True is " + str(task) + "!</center></b></font>")
-        QtCore.QTimer().singleShot(self.led_time*2, lambda: task_generation())  # waiting before to continue
+        self.lb_ask_text.setText("<font color=#%s>%s</font>" % ("009b9b" if correct else "ff0000", ask_text))
 
 
-# Temporary for the start:
-start_ask_text = "<center>To start type LVL number (1 to 7) and press \"Return\" key.</center>"
-ask_heading = ""
-ask_text = start_ask_text
+def lim_inc_switch(state):
+    if step == 0:
+        global lim_inc
+        lim_inc = True if state == QtCore.Qt.Checked else False
+
+
+def ans_dec_switch(state):
+    if step == 0:
+        global ans_dec
+        ans_dec = True if state == QtCore.Qt.Checked else False
+
+
+def start():
+
+    # GUI configs form blocking:
+    gui.le_lim_n.setDisabled(1)
+    gui.le_ans_t.setDisabled(1)
+
+    # GUI switches style update:
+    style_on = ".QCheckBox:indicator {background: #bbb;}"
+    style_off = ".QCheckBox:indicator {background: #ddd;}"
+    gui.cb_lim_inc.setStyleSheet(style_on if lim_inc else style_off)
+    gui.cb_ans_dec.setStyleSheet(style_on if ans_dec else style_off)
+
+    # Limit number correcting:
+    if gui.le_lim_n.text().isdigit():
+        global lim_n
+        if int(gui.le_lim_n.text()) < 2:
+            lim_n = 2
+        elif int(gui.le_lim_n.text()) > 1000000:
+            lim_n = 1000000
+        else:
+            lim_n = int(gui.le_lim_n.text())
+
+    # Answer time correcting:
+    if gui.le_ans_t.text().isdigit():
+        global ans_t
+        if int(gui.le_ans_t.text()) < 1000:
+            ans_t = 1000
+        elif int(gui.le_ans_t.text()) > 600000:
+            ans_t = 600000
+        else:
+            ans_t = int(gui.le_ans_t.text())
+
+    # Configs saving:
+    dump({"lim_n": lim_n, "lim_inc": lim_inc, "ans_t": ans_t, "ans_dec": ans_dec}, open("saves.p", "wb"))
+
+    # GUI pause button unblocking:
+    gui.btn_pause.setEnabled(True)
+
+    # Game beginning:
+    task_generation()
 
 
 def task_generation():
 
-    global trues
-    global mistakes
-    global answer_time
+    global step, mode, x, y, z
 
-    # Time for the answering:
-    answer_time = (basic_answer_time - ((trues - mistakes)/target)*basic_answer_time*difficult)*lvl
+    step += 1
 
-    # Mode generation (0 - memorization, 1 - addition, 2 - subtraction, 3 - multiplication, 4 - division):
-    min_mod = 1
-    if step > 1:
-        min_mod = 0
-    max_mod = 4
-    if lvl < 3:
-        max_mod = 2
-    mode = randrange(min_mod, max_mod + 1)
+    if randrange(4) == 0 and tasks_history:
+        # Repetition of a failed task:
+        failed_task = randrange(len(tasks_history))  # choosing a failed task
+        mode = tasks_history[failed_task][0]  # lading of the mode from the chosen failed task
+        x = tasks_history[failed_task][1]  # lading of x from the chosen failed task
+        y = tasks_history[failed_task][2]  # lading of y from the chosen failed task
+        del tasks_history[failed_task]  # removing the chosen failed task
+    else:
+        # Mode generation (memorization, addition, subtraction, multiplication, division):
+        min_mod = 0 if step > 1 else 1
+        max_mod = 4
+        mode = randrange(min_mod, max_mod + 1)
+        # Numbers generation:
+        if mode == 0:
+            z = randrange(len(answers_history))
+        elif mode == 1 or mode == 2:
+            x = randrange(int(lim_n*0.1), int(lim_n) + 1)
+            y = randrange(int(lim_n*0.1), int(lim_n) + 1)
+        else:
+            x = randrange(1, int(sqrt(lim_n)) + 1)
+            y = randrange(1, int(sqrt(lim_n)) + 1)
 
-    # Numbers generation:
-    max_num = 10 ** lvl
-    global x
-    global y
-    x = randrange(1, max_num)
-    y = randrange(1, max_num)
-
-    # Converting numbers for multiplication and division modes by levels:
-    if mode > 2:
-        if lvl < 5:
-            x //= 10 ** (lvl - 1)
-            if x == 0:
-                x = randrange(1, 10)
-        elif lvl >= 5:
-            x //= 10 ** (lvl - 2)
-            if x == 0:
-                x = randrange(10, 100)
-        if lvl < 7:
-            y //= 10 ** (lvl - 1)
-            if y == 0:
-                y = randrange(1, 10)
-        elif lvl == 7:
-            y //= 10 ** (lvl - 2)
-            if y == 0:
-                y = randrange(10, 100)
-
-    # Asks:
-    global task
-    global ask_heading
-    global ask_text
-    global answers_history
+    # Ask creating:
+    global task, ask_heading, ask_text
     ask_heading = "How is much?"
     if mode == 0:
-        z = randrange(len(answers_history))
         task = answers_history[z]
         ask_heading = "What was right answer?"
-        if z == 0:
-            ask_text = (str(z+1) + " step before?")
-        else:
-            ask_text = (str(z+1) + " steps before?")
+        ask_text = ("%s step before?" % (z + 1)) if z == 0 else ("%s steps before?" % (z + 1))
     elif mode == 1:
         task = x + y
-        ask_text = (str(x) + "+" + str(y))
+        ask_text = ("%s+%s" % (x, y))
     elif mode == 2:
         task = x - y
-        ask_text = (str(x) + "-" + str(y))
+        ask_text = ("%s-%s" % (x, y))
     elif mode == 3:
         task = x * y
-        ask_text = (str(x) + "*" + str(y))
+        ask_text = ("%s*%s" % (x, y))
     elif mode == 4:
-        task = (x*y) / y
-        ask_text = (str(x*y) + "/" + str(y))
-    ask_heading = ("<center>" + ask_heading + "</center>")
-    ask_text = ("<font size=8><b><center>" + ask_text + "</center></b></font>")
+        task = int((x*y) / y)
+        ask_text = ("%s/%s" % (x*y, y))
 
-    # Updating history of answers:
-    answers_history.insert(0, task)
-    # Removing unnecessary answers from history:
-    if len(answers_history) > lvl:
-        answers_history.pop()
+    # Answers history updating:
+    answers_history.insert(0, task)  # adding of the new task answer
+    if len(answers_history) > len(str(int(lim_n))):
+        answers_history.pop()  # clearing of old task answers
 
-    gui.upd_general()
-    gui.answer_start()
+    # For the GUI:
+    gui.upd_general()  # GUI updating
+    gui.pb_timer_state = 2  # timer activation
+    gui.timer_upd()  # calling updating of the timer
 
 
 def checking():
 
-    global trues
-    global mistakes
-
     # If game is starting:
-    global lvl
-    if ask_text == start_ask_text:
-        lvl = int(gui.tb_answer.text())
-        if lvl < 1:
-            lvl = 1
-        elif lvl > 7:
-            lvl = 7
-        task_generation()
+    if step == 0:
+        start()
         return
-    # If answer is empty:
-    elif gui.tb_answer.text() == "" or gui.tb_answer.text() == "-":
-        mistakes += 1
-        gui.upd_after_answer()
-        gui.upd_wrong()
-    # If answer is correct:
-    elif task == int(gui.tb_answer.text()):
-        trues += 1
-        gui.upd_after_answer()
-        gui.upd_correct()
-    # If answer is wrong:
-    else:
-        mistakes += 1
-        gui.upd_after_answer()
-        gui.upd_wrong()
 
-    global answers_history
-    global step
-    step += 1
+    # Answer checking:
+    global correct
+    correct = True if str(task) == gui.tb_answer.text() else False
 
-    # Level control:
-    if trues - mistakes == target and lvl < 7:
-        lvl += 1
-        trues = 0
-        mistakes = 0
-        step = 1
-        answers_history = []
-    elif trues - mistakes <= -3 and lvl > 1:
-        lvl -= 1
-        trues = 0
-        mistakes = 0
-        step = 1
-        answers_history = []
+    # Limit number increasing:
+    if lim_inc:
+        global lim_n
+        formula = round(lim_n*difficult, 1)
+        lim_n += formula if correct else (formula/2)*(-1)
+
+    # Answering time decreasing:
+    if ans_dec:
+        global ans_t
+        formula = ans_t*(difficult*0.1)
+        ans_t += int(formula*(-1) if correct else formula/2)
+
+    # Adding task for repetition:
+    if mode != 0 and not correct:
+        tasks_history.append((mode, x, y))
+
+    # Ending of checking:
+    gui.upd_after_answer()
 
 # GUI creating:
 app = QtGui.QApplication(argv)
